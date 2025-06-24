@@ -527,62 +527,32 @@ def _describe_navigation_format(nav_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Universal Windows Automation Test with Configuration-Driven Automation")
-    parser.add_argument('--config', default="notepad_hello_world",
+    parser = argparse.ArgumentParser(description="Universal Windows Automation - Configuration-Driven System")
+    parser.add_argument('config', nargs='?', default="notepad_hello_world",
                        help="Configuration name to execute")
-    parser.add_argument('--list-configs', action='store_true',
+    parser.add_argument('--list', action='store_true',
                        help="List all available automation configurations")
-    parser.add_argument('--title', default="Brand Test Tool", 
-                       help="Window title to connect to (for legacy tests)")
-    parser.add_argument('--navigation', nargs='+', 
-                       default=["{Alt+F} -> Create Project", "File -> New", "{Ctrl+N}", "Actions -> Configuration"],
-                       help="Navigation paths to try (for legacy tests)")
-    parser.add_argument('--detect-only', action='store_true',
-                       help="Only test application detection")
-    parser.add_argument('--formats-only', action='store_true',
-                       help="Only test navigation format parsing")
-    parser.add_argument('--legacy', action='store_true',
-                       help="Use legacy workflow instead of configuration")
-    parser.add_argument('--form-data', nargs='+', default=["Test Project", "Description here"],
-                       help="Data to fill in form fields (for legacy tests)")
     
     args = parser.parse_args()
     
-    print(f"🎯 Universal Automation Test - Configuration-Driven System")
+    print(f"🎯 Universal Automation - Configuration-Driven System")
     print()
     
-    if args.list_configs:
+    if args.list:
         # List available configurations
         list_available_configs()
         sys.exit(0)
-    elif args.legacy:
-        # Use legacy workflow
-        print(f"Target Application: '{args.title}'")
-        print(f"Navigation Paths: {args.navigation}")
-        print()
-        
-        if args.detect_only:
-            success = test_app_detection_only(args.title)
-        elif args.formats_only:
-            success = test_navigation_formats(args.title)
-        else:
-            success = test_centralized_navigation_workflow(
-                app_title=args.title,
-                navigation_paths=args.navigation,
-                form_data=args.form_data
-            )
     else:
-        # Use configuration-driven approach
+        # Execute specified configuration
         print(f"Configuration: '{args.config}'")
         print()
         success = execute_automation_config(args.config)
     
     if success:
-        print(f"\n🎉 Test completed successfully!")
-        print(f"✅ Configuration-driven automation system working correctly!")
+        print(f"\n🎉 Automation completed successfully!")
         sys.exit(0)
     else:
-        print(f"\n❌ Test failed!")
+        print(f"\n❌ Automation failed!")
         sys.exit(1)
 
 
