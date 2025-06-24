@@ -528,31 +528,22 @@ def _describe_navigation_format(nav_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Windows Automation - Configuration-Driven System")
-    parser.add_argument('config', nargs='?', default="notepad_hello_world",
-                       help="Configuration name to execute")
-    parser.add_argument('--list', action='store_true',
-                       help="List all available automation configurations")
-    
-    args = parser.parse_args()
     
     print(f"🎯 Universal Automation - Configuration-Driven System")
     print()
     
-    if args.list:
-        # List available configurations
-        list_available_configs()
-        sys.exit(0)
-    else:
-        # Execute specified configuration
-        print(f"Configuration: '{args.config}'")
-        print()
-        success = execute_automation_config(args.config)
+    success = False
+    for config_name in AUTOMATION_CONFIGS.keys():
+        success = execute_automation_config(config_name)
+        if not success:
+            break
+        time.sleep(2)
     
     if success:
         print(f"\n🎉 Automation completed successfully!")
         sys.exit(0)
     else:
-        print(f"\n❌ Automation failed!")
+        print(f"\n❌ Automation failed! All configurations failed.")
         sys.exit(1)
 
 
