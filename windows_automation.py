@@ -6,47 +6,351 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 import time
 import sys
+import win32gui
+import win32con
+from window_discovery import find_window_handle_by_title
 
 class WindowsAutomation:
-    def __init__(self, app_path: str):
-        """Initialize the automation with application path."""
-        self.app_path = app_path
+    def __init__(self, app_identifier: str, use_title: bool = False):
+        """Initialize the automation with either application path or window title.
+        
+        Args:
+            app_identifier: Either the path to the .exe file or the window title to find
+            use_title: If True, app_identifier is treated as a window title to find.
+                      If False, app_identifier is treated as an .exe path.
+        """
+        self.app_identifier = app_identifier
+        self.use_title = use_title
+        self.window_info = None
         self.driver = None
+        self.desktop_driver = None  # Desktop session for window discovery
         self.debug = True  # Enable detailed logging
+        
+        # If using title, try to find the window immediately
+        if self.use_title:
+            self.window_info = find_window_handle_by_title(self.app_identifier)
+            if not self.window_info:
+                raise ValueError(f"Could not find window with title containing: {self.app_identifier}")
+            if self.debug:
+                print(f"Found window: {self.window_info}")
     
-    def _get_capabilities(self) -> dict:
-        """Get the capabilities for WinAppDriver."""
-        caps = {
+    def _verify_window_state(self, hwnd: int, max_retries: int = 5, retry_delay: float = 0.5) -> bool:
+        """Verify that the window is in a proper state for automation.
+        
+        Args:
+            hwnd: Window handle to verify
+            max_retries: Maximum number of verification attempts
+            retry_delay: Delay between retries in seconds
+            
+        Returns:
+            bool: True if window is in proper state, False otherwise
+        """
+        for attempt in range(max_retries):
+            try:
+                # Check if window still exists
+                if not win32gui.IsWindow(hwnd):
+                    if self.debug:
+                        print(f"Window {hwnd} no longer exists")
+                    return False
+                
+                # Check if window is visible
+                if not win32gui.IsWindowVisible(hwnd):
+                    if self.debug:
+                        print(f"Window {hwnd} is not visible")
+                    continue
+                
+                # Check if window is foreground
+                if win32gui.GetForegroundWindow() != hwnd:
+                    if self.debug:
+                        print(f"Window {hwnd} is not foreground, attempt {attempt + 1}")
+                    # Try to bring to foreground again
+                    win32gui.SetForegroundWindow(hwnd)
+                    time.sleep(retry_delay)
+                    continue
+                
+                # Get window placement to verify not minimized
+                placement = win32gui.GetWindowPlacement(hwnd)
+                if placement[1] == win32con.SW_SHOWMINIMIZED:
+                    if self.debug:
+                        print(f"Window {hwnd} is minimized")
+                    continue
+                
+                # All checks passed
+                return True
+                
+            except Exception as e:
+                if self.debug:
+                    print(f"Error verifying window state: {e}")
+                time.sleep(retry_delay)
+                continue
+            
+        return False
+    
+    def _bring_window_to_foreground(self) -> bool:
+        """Bring the window to the foreground for automation.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.window_info:
+            return False
+            
+        hwnd = self.window_info['hwnd']
+        try:
+            # Show window if it's minimized
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                time.sleep(0.5)  # Wait for restore animation
+            
+            # Try multiple times to bring window to foreground
+            for _ in range(3):  # Try up to 3 times
+                # Enable the window
+                win32gui.EnableWindow(hwnd, True)
+                # Set focus and activate
+                win32gui.SetForegroundWindow(hwnd)
+                # Force window to be restored and active
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                win32gui.UpdateWindow(hwnd)
+                
+                # Longer delay to let window manager stabilize
+                time.sleep(1.0)
+                
+                # Verify window state
+                if self._verify_window_state(hwnd):
+                    if self.debug:
+                        print("Successfully brought window to foreground and verified state")
+                    # Additional delay after successful verification
+                    time.sleep(0.5)
+                    return True
+            
+            if self.debug:
+                print("Warning: Could not bring window to foreground")
+            return False
+            
+        except Exception as e:
+            if self.debug:
+                print(f"Error bringing window to foreground: {e}")
+            return False
+    
+    def _get_capabilities_for_app_path(self) -> dict:
+        """Get capabilities for launching new application."""
+        return {
             "platformName": "Windows",
             "deviceName": "WindowsPC",
-            "app": self.app_path,
+            "app": self.app_identifier,
             "ms:waitForAppLaunch": "1"
         }
-        return caps
+    
+    def _get_capabilities_for_desktop(self) -> dict:
+        """Get capabilities for desktop session."""
+        return {
+            "platformName": "Windows",
+            "deviceName": "WindowsPC",
+            "app": "Root"
+        }
+    
+    def _get_capabilities_for_window_handle(self) -> dict:
+        """Get capabilities for existing window using handle."""
+        hwnd_hex = hex(self.window_info['hwnd'])
+        return {
+            "platformName": "Windows",
+            "deviceName": "WindowsPC",
+            "appTopLevelWindow": hwnd_hex
+        }
+    
+    def _connect_via_desktop_session(self) -> bool:
+        """Try to connect via desktop session and find the window.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if self.debug:
+                print("Attempting desktop session approach...")
+            
+            # Create desktop session
+            desktop_caps = self._get_capabilities_for_desktop()
+            self.desktop_driver = webdriver.Remote(
+                command_executor='http://127.0.0.1:4723',
+                desired_capabilities=desktop_caps
+            )
+            
+            if self.debug:
+                print("Desktop session created successfully")
+            
+            # Try to find the window by name
+            window_name = self.window_info['title']
+            try:
+                window_element = self.desktop_driver.find_element_by_name(window_name)
+                if self.debug:
+                    print(f"Found window element: {window_name}")
+                
+                # Get the NativeWindowHandle
+                native_handle = window_element.get_attribute("NativeWindowHandle")
+                if native_handle and native_handle != "0":
+                    if self.debug:
+                        print(f"Got NativeWindowHandle: {native_handle}")
+                    
+                    # Convert to hex format
+                    handle_int = int(native_handle)
+                    handle_hex = hex(handle_int)
+                    
+                    # Close desktop session
+                    self.desktop_driver.quit()
+                    self.desktop_driver = None
+                    
+                    # Try to connect with the native window handle
+                    caps = {
+                        "platformName": "Windows",
+                        "deviceName": "WindowsPC",
+                        "appTopLevelWindow": handle_hex
+                    }
+                    
+                    self.driver = webdriver.Remote(
+                        command_executor='http://127.0.0.1:4723',
+                        desired_capabilities=caps
+                    )
+                    
+                    if self.debug:
+                        print("Successfully connected via desktop session approach")
+                    return True
+                    
+            except Exception as e:
+                if self.debug:
+                    print(f"Could not find window in desktop session: {e}")
+            
+            # Clean up desktop session if we get here
+            if self.desktop_driver:
+                self.desktop_driver.quit()
+                self.desktop_driver = None
+                
+        except Exception as e:
+            if self.debug:
+                print(f"Desktop session approach failed: {e}")
+            if self.desktop_driver:
+                try:
+                    self.desktop_driver.quit()
+                except:
+                    pass
+                self.desktop_driver = None
+        
+        return False
+    
+    def _connect_via_direct_handle(self) -> bool:
+        """Try to connect directly using window handle.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if self.debug:
+                print("Attempting direct handle approach...")
+            
+            # Try different handle formats
+            hwnd = self.window_info['hwnd']
+            handle_formats = [
+                str(hwnd),           # Decimal string
+                hex(hwnd),           # Hex string
+                f"0x{hwnd:X}",       # Hex with 0x prefix
+                f"{hwnd:08X}",       # 8-digit hex
+            ]
+            
+            for handle_format in handle_formats:
+                try:
+                    caps = {
+                        "platformName": "Windows",
+                        "deviceName": "WindowsPC",
+                        "appTopLevelWindow": handle_format
+                    }
+                    
+                    if self.debug:
+                        print(f"Trying handle format: {handle_format}")
+                    
+                    self.driver = webdriver.Remote(
+                        command_executor='http://127.0.0.1:4723',
+                        desired_capabilities=caps
+                    )
+                    
+                    if self.debug:
+                        print(f"Successfully connected with handle format: {handle_format}")
+                    return True
+                    
+                except Exception as e:
+                    if self.debug:
+                        print(f"Handle format {handle_format} failed: {e}")
+                    continue
+            
+        except Exception as e:
+            if self.debug:
+                print(f"Direct handle approach failed: {e}")
+        
+        return False
     
     def connect(self, wait_time: int = 1) -> None:
-        """Connect to the application."""
-        caps = self._get_capabilities()
-        print(f"\nConnecting with capabilities: {caps}")
+        """Connect to the application using multiple fallback approaches."""
         
-        try:
-            self.driver = webdriver.Remote(
-                command_executor='http://127.0.0.1:4723',
-                desired_capabilities=caps
-            )
-            print("Successfully connected!")
-        except Exception as e:
-            print(f"Failed to connect: {e}")
-            raise
+        # For app path, use the original approach
+        if not self.use_title:
+            caps = self._get_capabilities_for_app_path()
+            print(f"\nConnecting with app path capabilities: {caps}")
+            
+            try:
+                self.driver = webdriver.Remote(
+                    command_executor='http://127.0.0.1:4723',
+                    desired_capabilities=caps
+                )
+                print("Successfully connected!")
+                return
+            except Exception as e:
+                print(f"Failed to connect: {e}")
+                raise
+        
+        # For title-based automation, try multiple approaches
+        if not self._bring_window_to_foreground():
+            print("Warning: Could not bring window to foreground, continuing anyway...")
+        
+        # Try multiple connection approaches in order of preference
+        connection_methods = [
+            ("Desktop Session", self._connect_via_desktop_session),
+            ("Direct Handle", self._connect_via_direct_handle),
+        ]
+        
+        for method_name, method_func in connection_methods:
+            try:
+                if self.debug:
+                    print(f"\nTrying {method_name} approach...")
+                
+                if method_func():
+                    print(f"Successfully connected using {method_name} approach!")
+                    return
+                    
+            except Exception as e:
+                if self.debug:
+                    print(f"{method_name} approach failed: {e}")
+                continue
+        
+        # If all approaches fail, raise an error
+        raise RuntimeError(
+            f"Failed to connect to window '{self.app_identifier}' using all available methods. "
+            f"Window info: {self.window_info}"
+        )
     
     def disconnect(self) -> None:
         """Disconnect from the application."""
         if self.driver:
             try:
                 self.driver.quit()
-                print("Successfully disconnected.")
+                print("Successfully disconnected from main session.")
             except Exception as e:
-                print(f"Error during disconnect: {e}")
+                print(f"Error during main session disconnect: {e}")
+        
+        if self.desktop_driver:
+            try:
+                self.desktop_driver.quit()
+                print("Successfully disconnected from desktop session.")
+            except Exception as e:
+                print(f"Error during desktop session disconnect: {e}")
 
     def send_keys(self, keys) -> None:
         """Send keyboard keys to the application."""
