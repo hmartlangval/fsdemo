@@ -1,9 +1,299 @@
-"""Test script for Universal Windows Automation System with Centralized Navigation."""
+"""Test script for Universal Windows Automation System with Configuration-Driven Automation."""
 
 import sys
 import argparse
 import time
 from universal_automation import UniversalWindowAutomation
+
+# ==========================================
+# AUTOMATION CONFIGURATION
+# ==========================================
+
+AUTOMATION_CONFIGS_ALL = {
+    "notepad_hello_world": {
+        "app_title": "Untitled - Notepad",
+        "description": "Open Notepad, type hello world, and save",
+        "steps": [
+            {
+                "type": "navigate",
+                "path": "{Alt+F} -> {N}",
+                "description": "Open File menu and create New document"
+            },
+            {
+                "type": "type_text",
+                "text": "hello world",
+                "description": "Type hello world in the document"
+            },
+            {
+                "type": "navigate", 
+                "path": "{Alt+F} -> {S}",
+                "description": "Open File menu and Save"
+            }
+        ]
+    },
+    
+    "brand_test_tool": {
+        "app_title": "Brand Test Tool",
+        "description": "Java application automation workflow with timing control",
+        "steps": [
+            {
+                "type": "navigate",
+                "path": "{Alt+F} -> Create Project",
+                "description": "Open File menu and create new project",
+                "delay": 1.5  # Wait for app to be ready
+            },
+            {
+                "type": "fill_form",
+                "data": ["Test Project", "This is a test project description"],
+                "description": "Fill project creation form",
+                "delay": 2.0  # Wait for dialog to fully load
+            },
+            {
+                "type": "navigate",
+                "path": "{Tab} -> {Enter}",
+                "description": "Navigate to OK button and press it",
+                "delay": 0.5  # Brief pause before confirming
+            }
+        ]
+    },
+    
+    "calculator_operations": {
+        "app_title": "Calculator",
+        "description": "Perform calculator operations",
+        "steps": [
+            {
+                "type": "type_text",
+                "text": "123",
+                "description": "Enter first number"
+            },
+            {
+                "type": "navigate",
+                "path": "{+}",
+                "description": "Press plus operator"
+            },
+            {
+                "type": "type_text", 
+                "text": "456",
+                "description": "Enter second number"
+            },
+            {
+                "type": "navigate",
+                "path": "{Enter}",
+                "description": "Press equals to calculate"
+            }
+        ]
+    },
+    
+    "custom_workflow": {
+        "app_title": "Custom Application",
+        "description": "Template for custom automation workflows",
+        "steps": [
+            {
+                "type": "navigate",
+                "path": "File -> New",
+                "description": "Navigate to File -> New"
+            },
+            {
+                "type": "wait",
+                "duration": 2.0,
+                "description": "Wait 2 seconds for dialog"
+            },
+            {
+                "type": "type_text",
+                "text": "Sample text input",
+                "description": "Type sample text"
+            },
+            {
+                "type": "navigate",
+                "path": "{Ctrl+S}",
+                "description": "Save with Ctrl+S"
+            }
+        ]
+    }
+}
+AUTOMATION_CONFIGS = {
+    "notepad_hello_world": {
+        "app_title": "Untitled - Notepad",
+        "description": "Open Notepad, type hello world, and save",
+        "steps": [
+            {
+                "type": "navigate",
+                "path": "{Alt+F} -> {Down 1} -> {Enter}",
+                "description": "Open File menu and create New document",
+                "delay": 0.5  # Wait 1 second before opening menu
+            },
+            {
+                "type": "type_text",
+                "text": "hello world",
+                "description": "Type hello world in the document",
+                "delay": 5  # Wait 0.5 seconds before typing
+            },
+            # {
+            #     "type": "navigate", 
+            #     "path": "{Alt+F} -> {S}",
+            #     "description": "Open File menu and Save",
+            #     "delay": 0.5  # Wait 2 seconds before saving
+            # }
+        ]
+    }
+}
+
+# ==========================================
+# AUTOMATION EXECUTION ENGINE
+# ==========================================
+
+def execute_automation_config(config_name):
+    """Execute an automation configuration by name."""
+    
+    if config_name not in AUTOMATION_CONFIGS:
+        print(f"❌ Configuration '{config_name}' not found!")
+        print(f"Available configurations: {list(AUTOMATION_CONFIGS.keys())}")
+        return False
+    
+    config = AUTOMATION_CONFIGS[config_name]
+    automation = None
+    
+    try:
+        print(f"🚀 EXECUTING AUTOMATION CONFIG: {config_name}")
+        print("="*60)
+        print(f"Description: {config['description']}")
+        print(f"Target App: {config['app_title']}")
+        print(f"Steps: {len(config['steps'])}")
+        print()
+        
+        # Step 0: Connect to application (default behavior)
+        print(f"0️⃣ CONNECTING TO APPLICATION...")
+        automation = UniversalWindowAutomation(config['app_title'])
+        if not automation.connect():
+            print("❌ Failed to connect to application")
+            return False
+        
+        print(f"✅ Connected! App type: {automation.handler.app_type}")
+        print(f"Handler: {automation.handler.__class__.__name__}")
+        
+        # Execute each configured step
+        for step_index, step in enumerate(config['steps'], 1):
+            print(f"\n{step_index}️⃣ {step['description'].upper()}")
+            print(f"Type: {step['type']}")
+            
+            # Handle optional delay before step execution
+            delay = step.get('delay', 0)
+            if delay > 0:
+                print(f"⏳ Waiting {delay} seconds before executing step...")
+                time.sleep(delay)
+            else:
+                time.sleep(0.5)
+            
+            if not execute_automation_step(automation, step):
+                print(f"❌ Step {step_index} failed!")
+                return False
+            
+            print(f"✅ Step {step_index} completed successfully")
+            time.sleep(0.5)  # Brief pause between steps
+        
+        print(f"\n🎉 AUTOMATION CONFIG '{config_name}' COMPLETED SUCCESSFULLY!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Automation config error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+        
+    finally:
+        if automation:
+            print(f"\n🧹 CLEANUP...")
+            automation.disconnect()
+
+
+def execute_automation_step(automation, step):
+    """Execute a single automation step."""
+    
+    step_type = step['type']
+    
+    try:
+        if step_type == "navigate":
+            print(f"🧭 Navigation: '{step['path']}'")
+            return automation.navigate_menu(step['path'])
+            
+        elif step_type == "type_text":
+            print(f"⌨️ Typing: '{step['text']}'")
+            return type_text_in_app(automation, step['text'])
+            
+        elif step_type == "fill_form":
+            print(f"📝 Form data: {step['data']}")
+            return automation.fill_form(step['data'])
+            
+        elif step_type == "wait":
+            duration = step.get('duration', 1.0)
+            print(f"⏳ Waiting {duration} seconds...")
+            time.sleep(duration)
+            return True
+            
+        elif step_type == "click_button":
+            button_name = step.get('button_name', 'OK')
+            print(f"🖱️ Clicking button: '{button_name}'")
+            return click_button_by_name(automation, button_name)
+            
+        else:
+            print(f"❌ Unknown step type: {step_type}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Step execution error: {e}")
+        return False
+
+
+def type_text_in_app(automation, text):
+    """Type text in the currently focused application."""
+    try:
+        from selenium.webdriver.common.action_chains import ActionChains
+        actions = ActionChains(automation.handler.automation.driver)
+        actions.send_keys(text).perform()
+        return True
+    except Exception as e:
+        print(f"❌ Text typing failed: {e}")
+        return False
+
+
+def click_button_by_name(automation, button_name):
+    """Click a button by its name."""
+    try:
+        # Try to find button by name
+        button_xpath = f"//Button[@Name='{button_name}' or contains(@Name, '{button_name}')]"
+        button_element = automation.handler.automation.driver.find_element_by_xpath(button_xpath)
+        button_element.click()
+        return True
+    except Exception as e:
+        print(f"❌ Button click failed: {e}")
+        return False
+
+
+def list_available_configs():
+    """List all available automation configurations."""
+    print("📋 AVAILABLE AUTOMATION CONFIGURATIONS:")
+    print("="*50)
+    
+    for config_name, config in AUTOMATION_CONFIGS.items():
+        print(f"\n🔧 {config_name}")
+        print(f"   App: {config['app_title']}")
+        print(f"   Description: {config['description']}")
+        print(f"   Steps: {len(config['steps'])}")
+        
+        for i, step in enumerate(config['steps'], 1):
+            step_type = step['type']
+            delay_info = f" (delay: {step['delay']}s)" if step.get('delay', 0) > 0 else ""
+            
+            if step_type == "navigate":
+                print(f"     {i}. Navigate: {step['path']}{delay_info}")
+            elif step_type == "type_text":
+                print(f"     {i}. Type: '{step['text']}'{delay_info}")
+            elif step_type == "fill_form":
+                print(f"     {i}. Fill form: {step['data']}{delay_info}")
+            elif step_type == "wait":
+                print(f"     {i}. Wait: {step.get('duration', 1.0)}s{delay_info}")
+            else:
+                print(f"     {i}. {step_type}: {step.get('description', 'No description')}{delay_info}")
 
 
 def test_centralized_navigation_workflow(app_title, navigation_paths, form_data):
@@ -237,43 +527,59 @@ def _describe_navigation_format(nav_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Universal Windows Automation Test with Centralized Navigation")
+    parser = argparse.ArgumentParser(description="Universal Windows Automation Test with Configuration-Driven Automation")
+    parser.add_argument('--config', default="notepad_hello_world",
+                       help="Configuration name to execute")
+    parser.add_argument('--list-configs', action='store_true',
+                       help="List all available automation configurations")
     parser.add_argument('--title', default="Brand Test Tool", 
-                       help="Window title to connect to")
+                       help="Window title to connect to (for legacy tests)")
     parser.add_argument('--navigation', nargs='+', 
                        default=["{Alt+F} -> Create Project", "File -> New", "{Ctrl+N}", "Actions -> Configuration"],
-                       help="Navigation paths to try (supports curly bracket notation)")
+                       help="Navigation paths to try (for legacy tests)")
     parser.add_argument('--detect-only', action='store_true',
                        help="Only test application detection")
     parser.add_argument('--formats-only', action='store_true',
                        help="Only test navigation format parsing")
+    parser.add_argument('--legacy', action='store_true',
+                       help="Use legacy workflow instead of configuration")
     parser.add_argument('--form-data', nargs='+', default=["Test Project", "Description here"],
-                       help="Data to fill in form fields")
+                       help="Data to fill in form fields (for legacy tests)")
     
     args = parser.parse_args()
     
-    print(f"🎯 Universal Automation Test - Centralized Navigation System")
-    print(f"Target Application: '{args.title}'")
-    print(f"Navigation Paths: {args.navigation}")
+    print(f"🎯 Universal Automation Test - Configuration-Driven System")
     print()
     
-    if args.detect_only:
-        # Test detection only
-        success = test_app_detection_only(args.title)
-    elif args.formats_only:
-        # Test format parsing only
-        success = test_navigation_formats(args.title)
+    if args.list_configs:
+        # List available configurations
+        list_available_configs()
+        sys.exit(0)
+    elif args.legacy:
+        # Use legacy workflow
+        print(f"Target Application: '{args.title}'")
+        print(f"Navigation Paths: {args.navigation}")
+        print()
+        
+        if args.detect_only:
+            success = test_app_detection_only(args.title)
+        elif args.formats_only:
+            success = test_navigation_formats(args.title)
+        else:
+            success = test_centralized_navigation_workflow(
+                app_title=args.title,
+                navigation_paths=args.navigation,
+                form_data=args.form_data
+            )
     else:
-        # Test complete workflow with centralized navigation
-        success = test_centralized_navigation_workflow(
-            app_title=args.title,
-            navigation_paths=args.navigation,
-            form_data=args.form_data
-        )
+        # Use configuration-driven approach
+        print(f"Configuration: '{args.config}'")
+        print()
+        success = execute_automation_config(args.config)
     
     if success:
         print(f"\n🎉 Test completed successfully!")
-        print(f"✅ Centralized navigation system working correctly!")
+        print(f"✅ Configuration-driven automation system working correctly!")
         sys.exit(0)
     else:
         print(f"\n❌ Test failed!")

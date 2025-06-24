@@ -155,7 +155,25 @@ class NavigationParser:
             actions = ActionChains(automation_driver)
             
             if step['type'] == 'key_single':
-                actions.send_keys(step['key']).perform()
+                # Map special keys to Selenium Keys
+                key_map = {
+                    'enter': Keys.ENTER,
+                    'escape': Keys.ESCAPE,
+                    'tab': Keys.TAB,
+                    'space': Keys.SPACE,
+                    'backspace': Keys.BACKSPACE,
+                    'delete': Keys.DELETE,
+                    'home': Keys.HOME,
+                    'end': Keys.END,
+                    'pageup': Keys.PAGE_UP,
+                    'pagedown': Keys.PAGE_DOWN,
+                    'f1': Keys.F1, 'f2': Keys.F2, 'f3': Keys.F3, 'f4': Keys.F4,
+                    'f5': Keys.F5, 'f6': Keys.F6, 'f7': Keys.F7, 'f8': Keys.F8,
+                    'f9': Keys.F9, 'f10': Keys.F10, 'f11': Keys.F11, 'f12': Keys.F12
+                }
+                
+                selenium_key = key_map.get(step['key'], step['key'])
+                actions.send_keys(selenium_key).perform()
                 time.sleep(0.3)
                 return True
                 
@@ -371,13 +389,13 @@ class BaseWindowAutomation:
                 time.sleep(0.3)
             
             # Check for success only after ALL steps are completed
-            time.sleep(0.5)  # Wait a bit for any dialogs to appear
+            time.sleep(0.2)  # Brief wait for any windows/dialogs to appear
             if self._check_navigation_success():
-                print(f"✅ Navigation successful - dialog detected!")
+                print(f"✅ Navigation successful - change detected!")
                 return True
             else:
-                print(f"✅ Navigation completed - no dialog detected")
-                return True  # Still consider successful even if no dialog appears
+                print(f"✅ Navigation completed - no change detected")
+                return True  # Still consider successful even if no change appears
             
         except Exception as e:
             print(f"❌ Base navigation failed: {e}")
@@ -981,6 +999,40 @@ class DotNetWindowAutomation(BaseWindowAutomation):
 
 class Win32WindowAutomation(BaseWindowAutomation):
     """Basic automation for Win32 applications (Notepad, Calculator, etc.)."""
+    
+    def _check_navigation_success(self):
+        """Check if navigation was successful - Win32 override for better window detection."""
+        try:
+            # For Win32 apps, do a quick check for new windows or dialogs
+            initial_elements = len(self.get_all_elements())
+            time.sleep(0.1)  # Minimal wait for changes to settle
+            
+            # Quick check for new windows by title (most reliable for Notepad)
+            try:
+                from window_discovery import find_window_handle_by_title
+                windows = find_window_handle_by_title("Untitled - Notepad")
+                if len(windows) > 1:  # Multiple Notepad windows = new window opened
+                    print(f"  🔍 Win32: Detected new window (multiple Notepad instances)")
+                    return True
+            except:
+                pass
+            
+            # Quick element count check
+            current_elements = len(self.get_all_elements())
+            if current_elements > initial_elements + 5:
+                print(f"  🔍 Win32: Detected significant UI change ({initial_elements} → {current_elements} elements)")
+                return True
+            
+            # One more quick check after brief pause
+            time.sleep(0.1)
+            final_elements = len(self.get_all_elements())
+            if final_elements != initial_elements:
+                print(f"  🔍 Win32: Basic change detected ({initial_elements} → {final_elements} elements)")
+                return True
+            
+            return False
+        except:
+            return False
     
     def _execute_text_navigation(self, step):
         """Execute text-based navigation for Win32 applications.
