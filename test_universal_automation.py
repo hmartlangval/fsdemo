@@ -3,35 +3,49 @@
 import sys
 import argparse
 import time
+import os
 from universal_automation import UniversalWindowAutomation
+
+# Try to load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ Loaded .env configuration")
+except ImportError:
+    print("⚠️ python-dotenv not installed. Using default settings.")
+    print("   Install with: pip install python-dotenv")
+except Exception as e:
+    print(f"⚠️ Could not load .env file: {e}")
 
 # ==========================================
 # AUTOMATION CONFIGURATION
 # ==========================================
 
-AUTOMATION_CONFIGS_ALL = {
+AUTOMATION_CONFIGS = {
     "notepad_hello_world": {
         "app_title": "Untitled - Notepad",
         "description": "Open Notepad, type hello world, and save",
         "steps": [
             {
                 "type": "navigate",
-                "path": "{Alt+F} -> {N}",
-                "description": "Open File menu and create New document"
+                "path": "{Alt+F} -> {Down 1} -> {Enter}",
+                "description": "Open File menu and create New document",
+                "delay": 0.5  # Wait 1 second before opening menu
             },
             {
                 "type": "type_text",
                 "text": "hello world",
-                "description": "Type hello world in the document"
+                "description": "Type hello world in the document",
+                "delay": 5  # Wait 0.5 seconds before typing
             },
-            {
-                "type": "navigate", 
-                "path": "{Alt+F} -> {S}",
-                "description": "Open File menu and Save"
-            }
+            # {
+            #     "type": "navigate", 
+            #     "path": "{Alt+F} -> {S}",
+            #     "description": "Open File menu and Save",
+            #     "delay": 0.5  # Wait 2 seconds before saving
+            # }
         ]
-    },
-    
+    },    
     "brand_test_tool": {
         "app_title": "Brand Test Tool",
         "description": "Java application automation workflow with timing control",
@@ -111,32 +125,7 @@ AUTOMATION_CONFIGS_ALL = {
         ]
     }
 }
-AUTOMATION_CONFIGS = {
-    "notepad_hello_world": {
-        "app_title": "Untitled - Notepad",
-        "description": "Open Notepad, type hello world, and save",
-        "steps": [
-            {
-                "type": "navigate",
-                "path": "{Alt+F} -> {Down 1} -> {Enter}",
-                "description": "Open File menu and create New document",
-                "delay": 0.5  # Wait 1 second before opening menu
-            },
-            {
-                "type": "type_text",
-                "text": "hello world",
-                "description": "Type hello world in the document",
-                "delay": 5  # Wait 0.5 seconds before typing
-            },
-            # {
-            #     "type": "navigate", 
-            #     "path": "{Alt+F} -> {S}",
-            #     "description": "Open File menu and Save",
-            #     "delay": 0.5  # Wait 2 seconds before saving
-            # }
-        ]
-    }
-}
+
 
 # ==========================================
 # AUTOMATION EXECUTION ENGINE
@@ -527,23 +516,34 @@ def _describe_navigation_format(nav_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Universal Windows Automation - Configuration-Driven System")
-    
     print(f"🎯 Universal Automation - Configuration-Driven System")
     print()
     
-    success = False
-    for config_name in AUTOMATION_CONFIGS.keys():
-        success = execute_automation_config(config_name)
-        if not success:
-            break
-        time.sleep(2)
+    # Get configuration from environment variable
+    config_name = os.getenv('AUTOMATION_CONFIG', 'notepad_hello_world')
+    debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
+    verbose_logging = os.getenv('VERBOSE_LOGGING', 'false').lower() == 'true'
+    
+    print(f"📋 Configuration: {config_name}")
+    print(f"🐛 Debug Mode: {debug_mode}")
+    print(f"📝 Verbose Logging: {verbose_logging}")
+    print()
+    
+    # Check if configuration exists
+    if config_name not in AUTOMATION_CONFIGS:
+        print(f"❌ Configuration '{config_name}' not found in AUTOMATION_CONFIGS!")
+        print(f"Available configurations: {list(AUTOMATION_CONFIGS.keys())}")
+        print(f"💡 Update your .env file with a valid AUTOMATION_CONFIG value")
+        sys.exit(1)
+    
+    # Execute the specified configuration
+    success = execute_automation_config(config_name)
     
     if success:
         print(f"\n🎉 Automation completed successfully!")
         sys.exit(0)
     else:
-        print(f"\n❌ Automation failed! All configurations failed.")
+        print(f"\n❌ Automation failed!")
         sys.exit(1)
 
 
