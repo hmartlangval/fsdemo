@@ -6,6 +6,12 @@ import win32gui
 import win32con
 import win32api
 import time
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
+import threading
+import json
+import os
+from pynput import mouse, keyboard
 
 
 class ManualAutomationHelper:
@@ -239,3 +245,356 @@ class ManualAutomationHelper:
                 return vk_code & 0xFF
         
         return None
+
+
+class ManualAutomationConfiguration:
+    def __init__(self, target_window_title="Brand Test Tool"):
+        """
+        Initialize the configuration modal.
+        
+        Args:
+            target_window_title: Title of the target application window
+        """
+        self.target_window_title = target_window_title
+        self.target_hwnd = None
+        self.is_capturing = False
+        self.captured_sequence = []
+        self.mouse_listener = None
+        self.keyboard_listener = None
+        
+        self.create_modal()
+    
+    def create_modal(self):
+        """Create the configuration modal window."""
+        self.root = tk.Toplevel()
+        self.root.title("Manual Automation Configuration")
+        self.root.geometry("500x300")
+        self.root.resizable(False, False)
+        self.root.grab_set()  # Make it modal
+        
+        # Center the window
+        self.root.transient()
+        self.root.focus_force()
+        
+        # Main frame
+        main_frame = ttk.Frame(self.root, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = tk.Label(
+            main_frame,
+            text="Manual Automation Configuration",
+            font=('Arial', 14, 'bold')
+        )
+        title_label.pack(pady=(0, 20))
+        
+        # Target window info
+        target_frame = ttk.LabelFrame(main_frame, text="Target Window", padding="10")
+        target_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        tk.Label(target_frame, text=f"Target: {self.target_window_title}").pack(anchor=tk.W)
+        
+        # Buttons frame
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.pack(fill=tk.X, pady=10)
+        
+        # Setup Window button
+        self.setup_btn = ttk.Button(
+            buttons_frame,
+            text="Setup Window",
+            command=self.setup_window,
+            width=20
+        )
+        self.setup_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Capture Sequence button
+        self.capture_btn = ttk.Button(
+            buttons_frame,
+            text="Capture Sequence",
+            command=self.start_capture_sequence,
+            width=20
+        )
+        self.capture_btn.pack(side=tk.LEFT)
+        
+        # Status frame
+        status_frame = ttk.LabelFrame(main_frame, text="Status", padding="10")
+        status_frame.pack(fill=tk.BOTH, expand=True, pady=(20, 0))
+        
+        self.status_text = tk.Text(status_frame, height=8, wrap=tk.WORD)
+        self.status_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Scrollbar for status
+        scrollbar = ttk.Scrollbar(status_frame, orient=tk.VERTICAL, command=self.status_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.status_text.config(yscrollcommand=scrollbar.set)
+        
+        self.log_status("Configuration window ready")
+        
+        # Close button
+        close_btn = ttk.Button(
+            main_frame,
+            text="Close",
+            command=self.close_modal
+        )
+        close_btn.pack(pady=(10, 0))
+    
+    def log_status(self, message):
+        """Log a status message."""
+        timestamp = time.strftime("%H:%M:%S")
+        self.status_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.status_text.see(tk.END)
+        self.root.update()
+    
+    def setup_window(self):
+        """Setup the target application window."""
+        self.log_status("Setting up target window...")
+        
+        try:
+            # Find target window
+            hwnd = win32gui.FindWindow(None, self.target_window_title)
+            if not hwnd:
+                self.log_status(f"❌ Window not found: '{self.target_window_title}'")
+                return
+            
+            self.target_hwnd = hwnd
+            self.log_status(f"✅ Found window: '{self.target_window_title}' (Handle: {hwnd})")
+            
+            # Bring to focus
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.1)
+            win32gui.SetForegroundWindow(hwnd)
+            time.sleep(0.1)
+            self.log_status("✅ Window brought to focus")
+            
+            # Resize and position window
+            target_left = 56
+            target_top = 37
+            target_right = 985
+            target_bottom = 609
+            
+            width = target_right - target_left
+            height = target_bottom - target_top
+            
+            win32gui.MoveWindow(hwnd, target_left, target_top, width, height, True)
+            time.sleep(0.2)
+            
+            # Verify positioning
+            current_rect = win32gui.GetWindowRect(hwnd)
+            self.log_status(f"✅ Window repositioned:")
+            self.log_status(f"   Target: Left:{target_left} Top:{target_top} Right:{target_right} Bottom:{target_bottom}")
+            self.log_status(f"   Actual: Left:{current_rect[0]} Top:{current_rect[1]} Right:{current_rect[2]} Bottom:{current_rect[3]}")
+            
+            self.log_status("🎉 Window setup completed!")
+            
+        except Exception as e:
+            self.log_status(f"❌ Error setting up window: {e}")
+    
+    def start_capture_sequence(self):
+        """Start the sequence capture process."""
+        if self.is_capturing:
+            self.log_status("⚠️ Already capturing - press ESC to stop")
+            return
+        
+        # Show confirmation dialog
+        result = messagebox.askyesno(
+            "Capture Sequence",
+            "This will start capturing mouse clicks and keyboard input.\n\n"
+            "Instructions:\n"
+            "• Click and type as needed\n"
+            "• Press ESC to stop capturing\n"
+            "• Target window will be brought to focus\n\n"
+            "Proceed with capture?",
+            parent=self.root
+        )
+        
+        if not result:
+            self.log_status("Capture cancelled by user")
+            return
+        
+        # Ensure target window is focused
+        if not self.target_hwnd:
+            hwnd = win32gui.FindWindow(None, self.target_window_title)
+            if hwnd:
+                self.target_hwnd = hwnd
+            else:
+                self.log_status(f"❌ Target window not found: {self.target_window_title}")
+                return
+        
+        # Bring target window to focus
+        try:
+            win32gui.ShowWindow(self.target_hwnd, win32con.SW_RESTORE)
+            time.sleep(0.1)
+            win32gui.SetForegroundWindow(self.target_hwnd)
+            time.sleep(0.5)
+            self.log_status("✅ Target window focused for capture")
+        except Exception as e:
+            self.log_status(f"⚠️ Could not focus target window: {e}")
+        
+        # Start capturing
+        self.is_capturing = True
+        self.captured_sequence = []
+        self.capture_btn.config(text="Capturing... (ESC to stop)", state="disabled")
+        self.log_status("🔴 Capture started - press ESC to stop")
+        
+        # Start listeners
+        self.start_listeners()
+    
+    def start_listeners(self):
+        """Start mouse and keyboard listeners."""
+        try:
+            # Mouse listener (only clicks, not movement)
+            self.mouse_listener = mouse.Listener(
+                on_click=self.on_mouse_click
+            )
+            self.mouse_listener.start()
+            
+            # Keyboard listener
+            self.keyboard_listener = keyboard.Listener(
+                on_press=self.on_key_press,
+                on_release=self.on_key_release
+            )
+            self.keyboard_listener.start()
+            
+        except Exception as e:
+            self.log_status(f"❌ Error starting listeners: {e}")
+            self.stop_capture()
+    
+    def on_mouse_click(self, x, y, button, pressed):
+        """Handle mouse click events."""
+        if not self.is_capturing:
+            return
+        
+        if pressed and button == mouse.Button.left:
+            self.captured_sequence.append({
+                'type': 'click',
+                'coordinate': (x, y),
+                'timestamp': time.time()
+            })
+            self.log_status(f"📍 Click captured: ({x}, {y})")
+    
+    def on_key_press(self, key):
+        """Handle key press events."""
+        if not self.is_capturing:
+            return
+        
+        # Check for ESC to stop capture
+        if key == keyboard.Key.esc:
+            self.stop_capture()
+            return
+        
+        # Capture other keys
+        try:
+            if hasattr(key, 'char') and key.char:
+                # Regular character
+                self.captured_sequence.append({
+                    'type': 'type',
+                    'text': key.char,
+                    'timestamp': time.time()
+                })
+                self.log_status(f"⌨️ Key captured: '{key.char}'")
+            else:
+                # Special key
+                key_name = str(key).replace('Key.', '')
+                self.captured_sequence.append({
+                    'type': 'keys',
+                    'key_combination': f"{{{key_name}}}",
+                    'timestamp': time.time()
+                })
+                self.log_status(f"⌨️ Special key captured: {key_name}")
+        except Exception as e:
+            self.log_status(f"⚠️ Key capture error: {e}")
+    
+    def on_key_release(self, key):
+        """Handle key release events (not used currently)."""
+        pass
+    
+    def stop_capture(self):
+        """Stop the capture process."""
+        if not self.is_capturing:
+            return
+        
+        self.is_capturing = False
+        
+        # Stop listeners
+        if self.mouse_listener:
+            self.mouse_listener.stop()
+            self.mouse_listener = None
+        
+        if self.keyboard_listener:
+            self.keyboard_listener.stop()
+            self.keyboard_listener = None
+        
+        self.capture_btn.config(text="Capture Sequence", state="normal")
+        self.log_status(f"🛑 Capture stopped - {len(self.captured_sequence)} actions captured")
+        
+        if self.captured_sequence:
+            self.save_sequence()
+    
+    def save_sequence(self):
+        """Save the captured sequence."""
+        # Ask for sequence name
+        sequence_name = simpledialog.askstring(
+            "Save Sequence",
+            "Enter a name for this sequence:",
+            parent=self.root
+        )
+        
+        if not sequence_name:
+            self.log_status("Save cancelled - no name provided")
+            return
+        
+        try:
+            # Create sequence data
+            sequence_data = {
+                'name': sequence_name,
+                'target_window': self.target_window_title,
+                'created': time.strftime("%Y-%m-%d %H:%M:%S"),
+                'actions': self.captured_sequence
+            }
+            
+            # Load existing sequences or create new file
+            sequences_file = "test_manual_sequences.py"
+            sequences = {}
+            
+            if os.path.exists(sequences_file):
+                try:
+                    with open(sequences_file, 'r') as f:
+                        content = f.read()
+                        # Extract sequences dict from file
+                        if 'SEQUENCES = ' in content:
+                            import ast
+                            start = content.find('SEQUENCES = ') + 12
+                            end = content.find('\n\n', start)
+                            if end == -1:
+                                end = len(content)
+                            sequences_str = content[start:end]
+                            sequences = ast.literal_eval(sequences_str)
+                except Exception as e:
+                    self.log_status(f"⚠️ Could not load existing sequences: {e}")
+                    sequences = {}
+            
+            # Add new sequence
+            sequences[sequence_name] = sequence_data
+            
+            # Write sequences file
+            with open(sequences_file, 'w') as f:
+                f.write('"""\nManual Automation Sequences\n"""\n\n')
+                f.write('SEQUENCES = ')
+                f.write(json.dumps(sequences, indent=2))
+                f.write('\n')
+            
+            self.log_status(f"✅ Sequence '{sequence_name}' saved to {sequences_file}")
+            
+        except Exception as e:
+            self.log_status(f"❌ Error saving sequence: {e}")
+    
+    def close_modal(self):
+        """Close the configuration modal."""
+        if self.is_capturing:
+            self.stop_capture()
+        
+        self.root.destroy()
+    
+    def show(self):
+        """Show the configuration modal."""
+        self.root.mainloop()
