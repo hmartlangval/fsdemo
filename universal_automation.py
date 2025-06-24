@@ -6,9 +6,218 @@ and specialized handlers.
 """
 
 import time
+import re
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from windows_automation import WindowsAutomation
+
+
+class NavigationParser:
+    """Global parser for navigation paths with keyboard codes and text."""
+    
+    @staticmethod
+    def parse_navigation_path(navigation_path):
+        """Parse navigation path with curly bracket notation.
+        
+        Args:
+            navigation_path: Navigation string like:
+                - "{Alt+F} -> {N}" (keyboard codes only)
+                - "{Alt+F} -> Create Project" (mixed)
+                - "File -> New Project" (text only)
+                - "{Ctrl+N}" (single shortcut)
+                - "{Down 3}" (repeat key)
+                
+        Returns:
+            List of step dictionaries with 'type' and 'value' keys
+        """
+        try:
+            print(f"🔍 Parsing navigation: '{navigation_path}'")
+            
+            # Split by arrow notation
+            parts = [part.strip() for part in navigation_path.split('->')]
+            steps = []
+            
+            for part in parts:
+                step = NavigationParser._parse_single_step(part)
+                if step:
+                    steps.append(step)
+                    print(f"  📝 Parsed step: {step}")
+            
+            return steps
+            
+        except Exception as e:
+            print(f"⚠️ Error parsing navigation path: {e}")
+            return []
+    
+    @staticmethod
+    def _parse_single_step(step_text):
+        """Parse a single navigation step.
+        
+        Args:
+            step_text: Single step like "{Alt+F}", "{N}", "{Down 2}", "Create Project"
+            
+        Returns:
+            Dict with step information
+        """
+        step_text = step_text.strip()
+        
+        # Check if it's a keyboard code (wrapped in curly brackets)
+        if step_text.startswith('{') and step_text.endswith('}'):
+            code_content = step_text[1:-1]  # Remove { and }
+            return NavigationParser._parse_keyboard_code(code_content)
+        
+        # Check if it's a menu name (common menu names)
+        menu_names = ['file', 'edit', 'view', 'format', 'tools', 'help', 'window', 'actions', 'configuration']
+        if step_text.lower() in menu_names:
+            return {
+                'type': 'menu_text',
+                'value': step_text.lower(),
+                'original': step_text,
+                'description': f"Find menu: '{step_text}'"
+            }
+        
+        # Otherwise, it's a menu item text
+        return {
+            'type': 'menu_item_text',
+            'value': step_text.lower(),
+            'original': step_text,
+            'description': f"Find menu item: '{step_text}'"
+        }
+    
+    @staticmethod
+    def _parse_keyboard_code(code_content):
+        """Parse keyboard code content (without curly brackets).
+        
+        Args:
+            code_content: Content like "Alt+F", "N", "Down 3", "Ctrl+Shift+S"
+            
+        Returns:
+            Dict with keyboard code information
+        """
+        code_content = code_content.strip()
+        
+        # Check for repeat patterns like "Down 3", "Up 2", "Tab 5"
+        repeat_match = re.match(r'^(Down|Up|Left|Right|Tab|Enter|Escape)\s+(\d+)$', code_content, re.IGNORECASE)
+        if repeat_match:
+            key_name = repeat_match.group(1).lower()
+            repeat_count = int(repeat_match.group(2))
+            return {
+                'type': 'key_repeat',
+                'key': key_name,
+                'count': repeat_count,
+                'original': code_content,
+                'description': f"Press {key_name} {repeat_count} times"
+            }
+        
+        # Check for modifier combinations like "Alt+F", "Ctrl+N", "Ctrl+Shift+S"
+        if '+' in code_content:
+            parts = [part.strip() for part in code_content.split('+')]
+            modifiers = []
+            key = None
+            
+            for part in parts:
+                part_lower = part.lower()
+                if part_lower in ['ctrl', 'alt', 'shift', 'win']:
+                    modifiers.append(part_lower)
+                else:
+                    key = part_lower
+            
+            if key:
+                return {
+                    'type': 'key_combination',
+                    'modifiers': modifiers,
+                    'key': key,
+                    'original': code_content,
+                    'description': f"Press {' + '.join(modifiers + [key])}"
+                }
+        
+        # Single key press
+        return {
+            'type': 'key_single',
+            'key': code_content.lower(),
+            'original': code_content,
+            'description': f"Press key: '{code_content}'"
+        }
+    
+    @staticmethod
+    def execute_step(step, automation_driver):
+        """Execute a parsed navigation step.
+        
+        Args:
+            step: Step dictionary from parse_navigation_path
+            automation_driver: WebDriver instance
+            
+        Returns:
+            bool: Success/failure
+        """
+        try:
+            print(f"  🎯 Executing: {step['description']}")
+            actions = ActionChains(automation_driver)
+            
+            if step['type'] == 'key_single':
+                actions.send_keys(step['key']).perform()
+                time.sleep(0.3)
+                return True
+                
+            elif step['type'] == 'key_combination':
+                # Press modifiers down
+                for modifier in step['modifiers']:
+                    if modifier == 'ctrl':
+                        actions.key_down(Keys.CONTROL)
+                    elif modifier == 'alt':
+                        actions.key_down(Keys.ALT)
+                    elif modifier == 'shift':
+                        actions.key_down(Keys.SHIFT)
+                
+                # Press main key
+                actions.send_keys(step['key'])
+                
+                # Release modifiers
+                for modifier in reversed(step['modifiers']):
+                    if modifier == 'ctrl':
+                        actions.key_up(Keys.CONTROL)
+                    elif modifier == 'alt':
+                        actions.key_up(Keys.ALT)
+                    elif modifier == 'shift':
+                        actions.key_up(Keys.SHIFT)
+                
+                actions.perform()
+                time.sleep(0.5)
+                return True
+                
+            elif step['type'] == 'key_repeat':
+                key_map = {
+                    'down': Keys.ARROW_DOWN,
+                    'up': Keys.ARROW_UP,
+                    'left': Keys.ARROW_LEFT,
+                    'right': Keys.ARROW_RIGHT,
+                    'tab': Keys.TAB,
+                    'enter': Keys.ENTER,
+                    'escape': Keys.ESCAPE
+                }
+                
+                selenium_key = key_map.get(step['key'])
+                if selenium_key:
+                    for i in range(step['count']):
+                        actions.send_keys(selenium_key).perform()
+                        time.sleep(0.2)
+                    return True
+                else:
+                    print(f"  ❌ Unknown repeat key: {step['key']}")
+                    return False
+                    
+            elif step['type'] in ['menu_text', 'menu_item_text']:
+                # These need to be handled by the specific automation handlers
+                # Return True to indicate parsing success, actual execution happens elsewhere
+                return True
+                
+            else:
+                print(f"  ❌ Unknown step type: {step['type']}")
+                return False
+                
+        except Exception as e:
+            print(f"  ❌ Step execution failed: {e}")
+            return False
 
 
 class BaseWindowAutomation:
@@ -124,18 +333,111 @@ class BaseWindowAutomation:
             return []
     
     # Default implementations (can be overridden by subclasses)
-    def navigate_menu(self, menu_path, target_item):
-        """Navigate to a menu item. Default implementation for detection purposes.
+    def navigate_menu(self, navigation_path):
+        """Navigate through menu structure using the global parser.
         
         Args:
-            menu_path: Menu path (e.g., "File", "Edit", etc.)
-            target_item: Target menu item to select
+            navigation_path: Navigation string with curly bracket notation like:
+                - "{Alt+F} -> {N}" (keyboard codes only)
+                - "{Alt+F} -> Create Project" (mixed)
+                - "File -> New Project" (text only)
+                - "{Ctrl+N}" (single shortcut)
+                - "{Down 3}" (repeat key)
             
         Returns:
             bool: Success/failure
         """
-        print(f"⚠️ Base class navigate_menu called - no implementation")
+        try:
+            print(f"\n=== BASE NAVIGATION HANDLER ===")
+            print(f"App Type: {self.app_type}")
+            print(f"Navigation Path: '{navigation_path}'")
+            
+            # Use global parser to parse the navigation path
+            parsed_steps = NavigationParser.parse_navigation_path(navigation_path)
+            
+            if not parsed_steps:
+                print(f"❌ Could not parse navigation path: '{navigation_path}'")
+                return False
+            
+            # Execute navigation steps based on app type
+            for step_index, step in enumerate(parsed_steps):
+                print(f"\n📍 Step {step_index + 1}: {step['description']}")
+                
+                if not self._execute_navigation_step(step):
+                    print(f"❌ Step {step_index + 1} failed")
+                    return False
+                
+                # Brief pause between steps
+                time.sleep(0.3)
+            
+            # Check for success only after ALL steps are completed
+            time.sleep(0.5)  # Wait a bit for any dialogs to appear
+            if self._check_navigation_success():
+                print(f"✅ Navigation successful - dialog detected!")
+                return True
+            else:
+                print(f"✅ Navigation completed - no dialog detected")
+                return True  # Still consider successful even if no dialog appears
+            
+        except Exception as e:
+            print(f"❌ Base navigation failed: {e}")
+            return False
+    
+    def _execute_navigation_step(self, step):
+        """Execute a single navigation step based on app type.
+        
+        Args:
+            step: Parsed step dictionary from NavigationParser
+            
+        Returns:
+            bool: Success/failure
+        """
+        try:
+            # Handle keyboard codes directly (universal across all app types)
+            if step['type'] in ['key_single', 'key_combination', 'key_repeat']:
+                return NavigationParser.execute_step(step, self.automation.driver)
+            
+            # Handle text-based navigation (app-specific)
+            elif step['type'] in ['menu_text', 'menu_item_text']:
+                return self._execute_text_navigation(step)
+            
+            else:
+                print(f"  ❌ Unknown step type: {step['type']}")
+                return False
+                
+        except Exception as e:
+            print(f"  ❌ Step execution failed: {e}")
+            return False
+    
+    def _execute_text_navigation(self, step):
+        """Execute text-based navigation - to be implemented by subclasses.
+        
+        Args:
+            step: Parsed step dictionary for text navigation
+            
+        Returns:
+            bool: Success/failure
+        """
+        # Default implementation for basic text navigation
+        print(f"  ⚠️ Text navigation not implemented for {self.app_type}: {step['description']}")
         return False
+    
+    def _check_navigation_success(self):
+        """Check if navigation was successful - can be overridden by subclasses.
+        
+        Returns:
+            bool: True if navigation appears successful
+        """
+        try:
+            # Basic success check - look for increased element count (dialog appeared)
+            current_elements = len(self.get_all_elements())
+            time.sleep(0.3)
+            new_elements = len(self.get_all_elements())
+            
+            # Success if element count increased or we have many elements (dialog)
+            return new_elements > current_elements or current_elements > 15
+        except:
+            return False
     
     def identify_dialog_elements(self, wait_timeout=5):
         """Identify elements in a dialog that appeared. Default implementation.
@@ -165,77 +467,130 @@ class BaseWindowAutomation:
 class JavaWindowAutomation(BaseWindowAutomation):
     """Specialized automation for Java Swing applications."""
     
-    def navigate_menu(self, menu_path, target_item):
-        """Navigate Java Swing menu using keyboard shortcuts.
+    def _execute_text_navigation(self, step):
+        """Execute text-based navigation for Java applications.
         
         Args:
-            menu_path: Menu name (e.g., "File", "Edit", "Actions")
-            target_item: Menu item to find (e.g., "New", "Open", "Save")
+            step: Parsed step dictionary for text navigation
             
         Returns:
             bool: Success/failure
         """
         try:
-            print(f"\n=== JAVA MENU NAVIGATION ===")
-            print(f"Menu: {menu_path} → {target_item}")
+            print(f"  🎯 Java text navigation: {step['description']}")
             
+            # Handle text-based navigation (Java-specific)
+            if step['type'] == 'menu_text':
+                return self._execute_java_menu_open(step['original'])
+            
+            elif step['type'] == 'menu_item_text':
+                return self._execute_java_menu_item(step['original'])
+            
+            else:
+                print(f"  ❌ Unknown text navigation type for Java: {step['type']}")
+                return False
+                
+        except Exception as e:
+            print(f"  ❌ Java text navigation failed: {e}")
+            return False
+    
+    def _execute_java_menu_open(self, menu_name):
+        """Open Java menu using Alt+Key."""
+        try:
             # Map menu names to keyboard shortcuts
             menu_shortcuts = {
-                'file': 'f',
-                'edit': 'e', 
-                'view': 'v',
-                'actions': 'a',
-                'configuration': 'c',
-                'config': 'c',
-                'help': 'h',
-                'tools': 't',
-                'window': 'w'
+                'file': 'f', 'edit': 'e', 'view': 'v', 'actions': 'a',
+                'configuration': 'c', 'config': 'c', 'help': 'h',
+                'tools': 't', 'window': 'w', 'format': 'o'
             }
             
-            # Get shortcut for menu
-            menu_key = menu_shortcuts.get(menu_path.lower())
+            menu_key = menu_shortcuts.get(menu_name.lower())
             if not menu_key:
-                print(f"❌ Unknown menu: {menu_path}")
+                print(f"  ❌ Unknown Java menu: {menu_name}")
                 return False
             
-            # Open menu with Alt+Key
+            print(f"  📂 Opening Java menu: Alt+{menu_key.upper()}")
             actions = ActionChains(self.automation.driver)
-            print(f"Opening menu with Alt+{menu_key.upper()}")
             actions.key_down(Keys.ALT).send_keys(menu_key).key_up(Keys.ALT).perform()
             time.sleep(1)
+            return True
             
-            # Navigate through menu items
-            print(f"Searching for: '{target_item}'")
-            max_attempts = 15
+        except Exception as e:
+            print(f"  ❌ Java menu open failed: {e}")
+            return False
+    
+    def _execute_java_menu_item(self, item_name):
+        """Select Java menu item using text search."""
+        try:
+            print(f"  🎯 Selecting Java menu item: '{item_name}'")
             
-            for attempt in range(max_attempts):
-                try:
-                    # Get current focused element text
-                    current_text = self.automation.get_active_element_text()
-                    print(f"  [{attempt + 1}] Current: '{current_text}'")
-                    
-                    # Check if we found our target
-                    if target_item.lower() in current_text.lower():
-                        print(f"  ✅ Found: '{current_text}'")
-                        # Press Enter to select
-                        actions.send_keys(Keys.ENTER).perform()
-                        time.sleep(1)
-                        return True
-                    
-                    # Move to next item
-                    actions.send_keys(Keys.ARROW_DOWN).perform()
-                    time.sleep(0.3)
-                    
-                except Exception as e:
-                    print(f"  ⚠️ Navigation error: {e}")
-                    continue
+            # Strategy 1: Try first letter
+            if self._try_first_letter_selection(item_name.lower(), None):
+                return True
             
-            print(f"❌ Item '{target_item}' not found after {max_attempts} attempts")
-            actions.send_keys(Keys.ESCAPE).perform()  # Close menu
+            # Strategy 2: Try position-based navigation
+            if self._try_position_based_selection(item_name, None):
+                return True
+            
+            print(f"  ❌ Java menu item '{item_name}' not found")
             return False
             
         except Exception as e:
-            print(f"❌ Java menu navigation failed: {e}")
+            print(f"  ❌ Java menu item selection failed: {e}")
+            return False
+    
+
+    
+
+    
+    def _try_first_letter_selection(self, item_text, actions):
+        """Try selecting menu item by first letter."""
+        try:
+            first_letter = item_text[0] if item_text else ''
+            if first_letter:
+                print(f"    Trying first letter: '{first_letter}'")
+                actions.send_keys(first_letter).perform()
+                time.sleep(0.5)
+                return True
+            return False
+        except:
+            return False
+    
+    def _try_position_based_selection(self, original_text, actions):
+        """Try selecting menu item by navigating positions."""
+        try:
+            print(f"    Trying position-based selection...")
+            max_attempts = 10
+            
+            for pos in range(max_attempts):
+                # Press Enter to try current position
+                actions.send_keys(Keys.ENTER).perform()
+                time.sleep(0.3)
+                
+                if self._check_success_condition():
+                    print(f"    ✅ Position {pos + 1} worked!")
+                    return True
+                
+                # Move to next position
+                actions.send_keys(Keys.ARROW_DOWN).perform()
+                time.sleep(0.2)
+            
+            return False
+        except:
+            return False
+    
+
+    
+    def _check_navigation_success(self):
+        """Check if navigation was successful (dialog appeared) - Java override."""
+        try:
+            current_elements = len(self.get_all_elements())
+            time.sleep(0.3)
+            new_elements = len(self.get_all_elements())
+            
+            # Success if element count increased (dialog appeared)
+            return new_elements > current_elements or current_elements > 15
+        except:
             return False
     
     def identify_dialog_elements(self, wait_timeout=5):
@@ -411,48 +766,88 @@ class JavaWindowAutomation(BaseWindowAutomation):
 class DotNetWindowAutomation(BaseWindowAutomation):
     """Specialized automation for .NET applications (WPF/WinForms)."""
     
-    def navigate_menu(self, menu_path, target_item):
-        """Navigate .NET menu using UI Automation."""
+    def _execute_text_navigation(self, step):
+        """Execute text-based navigation for .NET applications.
+        
+        Args:
+            step: Parsed step dictionary for text navigation
+            
+        Returns:
+            bool: Success/failure
+        """
         try:
-            print(f"\n=== .NET MENU NAVIGATION ===")
-            print(f"Menu: {menu_path} → {target_item}")
+            print(f"  🎯 .NET text navigation: {step['description']}")
             
-            # Try to find menu bar
-            try:
-                menu_bar = self.automation.driver.find_element_by_xpath("//MenuBar")
-                print("✅ Found MenuBar")
-            except:
-                print("⚠️ MenuBar not found, trying Menu elements")
-                menu_bar = None
+            # Handle text-based navigation (.NET-specific)
+            if step['type'] == 'menu_text':
+                return self._execute_dotnet_menu_open(step['original'])
             
-            # Find the main menu
-            menu_xpath = f"//Menu[@Name='{menu_path}' or contains(@Name, '{menu_path}')]"
-            try:
-                main_menu = self.automation.driver.find_element_by_xpath(menu_xpath)
-                print(f"✅ Found menu: {menu_path}")
-                
-                # Click to open menu
-                main_menu.click()
-                time.sleep(0.5)
-                
-                # Find the target menu item
-                item_xpath = f"//MenuItem[@Name='{target_item}' or contains(@Name, '{target_item}')]"
-                menu_item = self.automation.driver.find_element_by_xpath(item_xpath)
-                print(f"✅ Found menu item: {target_item}")
-                
-                # Click the menu item
-                menu_item.click()
-                time.sleep(0.5)
-                
-                return True
-                
-            except Exception as e:
-                print(f"❌ .NET menu navigation failed: {e}")
+            elif step['type'] == 'menu_item_text':
+                return self._execute_dotnet_menu_item(step['original'])
+            
+            else:
+                print(f"  ❌ Unknown text navigation type for .NET: {step['type']}")
                 return False
                 
         except Exception as e:
-            print(f"❌ .NET menu navigation error: {e}")
+            print(f"  ❌ .NET text navigation failed: {e}")
             return False
+    
+    def _execute_dotnet_menu_open(self, menu_name):
+        """Open .NET menu using UI Automation."""
+        try:
+            print(f"  📂 Opening .NET menu: '{menu_name}'")
+            # Try to find menu by name using UI Automation
+            menu_xpath = f"//MenuItem[@Name='{menu_name}' or contains(@Name, '{menu_name}')]"
+            try:
+                menu_element = self.automation.driver.find_element_by_xpath(menu_xpath)
+                menu_element.click()
+                time.sleep(0.5)
+                return True
+            except:
+                print(f"  ⚠️ Menu '{menu_name}' not found via UI, trying Alt+Key fallback")
+                # Fallback to keyboard shortcuts
+                menu_shortcuts = {
+                    'file': 'f', 'edit': 'e', 'view': 'v', 'tools': 't',
+                    'help': 'h', 'window': 'w', 'format': 'o'
+                }
+                menu_key = menu_shortcuts.get(menu_name.lower())
+                if menu_key:
+                    actions = ActionChains(self.automation.driver)
+                    actions.key_down(Keys.ALT).send_keys(menu_key).key_up(Keys.ALT).perform()
+                    time.sleep(0.5)
+                    return True
+                return False
+        except Exception as e:
+            print(f"  ❌ .NET menu open failed: {e}")
+            return False
+    
+    def _execute_dotnet_menu_item(self, item_name):
+        """Select .NET menu item using UI Automation."""
+        try:
+            print(f"  🎯 Selecting .NET menu item: '{item_name}'")
+            # Try to find menu item by name
+            item_xpath = f"//MenuItem[@Name='{item_name}' or contains(@Name, '{item_name}')]"
+            try:
+                item_element = self.automation.driver.find_element_by_xpath(item_xpath)
+                item_element.click()
+                time.sleep(0.5)
+                return True
+            except:
+                print(f"  ⚠️ Menu item '{item_name}' not found via UI, trying first letter")
+                # Fallback to first letter
+                first_letter = item_name[0].lower() if item_name else ''
+                if first_letter:
+                    actions = ActionChains(self.automation.driver)
+                    actions.send_keys(first_letter).perform()
+                    time.sleep(0.3)
+                    return True
+                return False
+        except Exception as e:
+            print(f"  ❌ .NET menu item selection failed: {e}")
+            return False
+    
+
     
     def identify_dialog_elements(self, wait_timeout=5):
         """Identify elements in .NET dialog."""
@@ -587,52 +982,59 @@ class DotNetWindowAutomation(BaseWindowAutomation):
 class Win32WindowAutomation(BaseWindowAutomation):
     """Basic automation for Win32 applications (Notepad, Calculator, etc.)."""
     
-    def navigate_menu(self, menu_path, target_item):
-        """Navigate Win32 menu using UI Automation."""
-        try:
-            print(f"\n=== WIN32 MENU NAVIGATION ===")
-            print(f"Menu: {menu_path} → {target_item}")
+    def _execute_text_navigation(self, step):
+        """Execute text-based navigation for Win32 applications.
+        
+        Args:
+            step: Parsed step dictionary for text navigation
             
-            # Try to find menu bar or menu items directly
-            try:
-                # Look for MenuBar first
-                menu_bar = self.automation.driver.find_element_by_xpath("//MenuBar")
-                print("✅ Found MenuBar")
-                
-                # Find the main menu
-                menu_xpath = f"//Menu[@Name='{menu_path}' or contains(@Name, '{menu_path}')]"
-                main_menu = self.automation.driver.find_element_by_xpath(menu_xpath)
-                main_menu.click()
-                time.sleep(0.5)
-                
-                # Find the target menu item
-                item_xpath = f"//MenuItem[@Name='{target_item}' or contains(@Name, '{target_item}')]"
-                menu_item = self.automation.driver.find_element_by_xpath(item_xpath)
-                menu_item.click()
-                time.sleep(0.5)
-                
-                print("✅ Win32 menu navigation successful")
-                return True
-                
-            except Exception as e:
-                print(f"⚠️ UI Automation menu failed, trying keyboard shortcuts: {e}")
-                
-                # Fallback to keyboard shortcuts (like Alt+F)
-                actions = ActionChains(self.automation.driver)
-                menu_key = menu_path[0].lower()  # First letter of menu name
-                actions.key_down(Keys.ALT).send_keys(menu_key).key_up(Keys.ALT).perform()
-                time.sleep(1)
-                
-                # Try to find the menu item by typing first letter
-                item_key = target_item[0].lower()
-                actions.send_keys(item_key).perform()
-                time.sleep(0.5)
-                
-                print("✅ Win32 keyboard navigation attempted")
-                return True
+        Returns:
+            bool: Success/failure
+        """
+        try:
+            print(f"  🎯 Win32 text navigation: {step['description']}")
+            
+            # Handle text-based navigation (Win32-specific)
+            if step['type'] == 'menu_text':
+                return self._try_win32_menu_ui(step['original'])
+            
+            elif step['type'] == 'menu_item_text':
+                return self._try_win32_menuitem_ui(step['original'])
+            
+            else:
+                print(f"  ❌ Unknown text navigation type for Win32: {step['type']}")
+                return False
                 
         except Exception as e:
-            print(f"❌ Win32 menu navigation failed: {e}")
+            print(f"  ❌ Win32 text navigation failed: {e}")
+            return False
+    
+
+    
+    def _try_win32_menu_ui(self, menu_name):
+        """Try opening menu using UI Automation."""
+        try:
+            menu_xpath = f"//Menu[@Name='{menu_name}' or contains(@Name, '{menu_name}')]"
+            main_menu = self.automation.driver.find_element_by_xpath(menu_xpath)
+            print(f"  ✅ Found menu via UI: {menu_name}")
+            main_menu.click()
+            time.sleep(0.5)
+            return True
+        except:
+            print(f"  ⚠️ UI menu access failed for: {menu_name}")
+            return False
+    
+    def _try_win32_menuitem_ui(self, item_name):
+        """Try selecting menu item using UI Automation."""
+        try:
+            item_xpath = f"//MenuItem[@Name='{item_name}' or contains(@Name, '{item_name}')]"
+            menu_item = self.automation.driver.find_element_by_xpath(item_xpath)
+            print(f"  ✅ Found menu item via UI: {item_name}")
+            menu_item.click()
+            time.sleep(0.5)
+            return True
+        except:
+            print(f"  ⚠️ UI menu item access failed for: {item_name}")
             return False
     
     def identify_dialog_elements(self, wait_timeout=5):
@@ -802,10 +1204,10 @@ class UniversalWindowAutomation:
             print(f"❌ Universal automation failed: {e}")
             return False
     
-    def navigate_menu(self, menu_path, target_item):
+    def navigate_menu(self, navigation_path):
         """Navigate menu using appropriate handler."""
         if self.handler:
-            return self.handler.navigate_menu(menu_path, target_item)
+            return self.handler.navigate_menu(navigation_path)
         return False
     
     def identify_dialog(self, wait_timeout=5):
@@ -835,9 +1237,9 @@ def connect_to_application(app_title):
         return automation
     return None
 
-def navigate_menu_and_select(automation, menu_path, target_item):
+def navigate_menu_and_select(automation, navigation_path):
     """Navigate menu and select item."""
-    return automation.navigate_menu(menu_path, target_item)
+    return automation.navigate_menu(navigation_path)
 
 def identify_dialog_type(automation, wait_timeout=5):
     """Identify dialog type."""
